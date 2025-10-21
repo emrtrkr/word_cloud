@@ -1,0 +1,6 @@
+streamlit
+wordcloud
+pandas
+pillow
+matplotlib
+openpyxl
