@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import io
 import base64
+from docx import Document
+import PyPDF2
 
 # Sayfa yapılandırması
 st.set_page_config(
@@ -15,7 +17,26 @@ st.set_page_config(
 
 # Başlık
 st.title("☁️ Word Cloud Generator")
-st.markdown("### Verilerinizden profesyonel kelime bulutları oluşturun!")
+st.markdown("### Verilerinizden özelleştirilebilir kelime bulutları oluşturun")
+
+# Metin çıkarma fonksiyonları
+def extract_text_from_docx(file):
+    """Word dosyasından metin çıkar"""
+    doc = Document(file)
+    full_text = []
+    for paragraph in doc.paragraphs:
+        full_text.append(paragraph.text)
+    return '\n'.join(full_text)
+
+def extract_text_from_pdf(file):
+    """PDF dosyasından metin çıkar"""
+    pdf_reader = PyPDF2.PdfReader(file)
+    full_text = []
+    for page in pdf_reader.pages:
+        text = page.extract_text()
+        if text:
+            full_text.append(text)
+    return '\n'.join(full_text)
 
 # Sidebar - Dosya yükleme ve ayarlar
 with st.sidebar:
@@ -23,8 +44,8 @@ with st.sidebar:
     
     uploaded_file = st.file_uploader(
         "Dosyanızı yükleyin",
-        type=['csv', 'txt', 'xlsx', 'xls'],
-        help="CSV, TXT veya Excel dosyası yükleyebilirsiniz"
+        type=['csv', 'txt', 'xlsx', 'xls', 'docx', 'pdf'],
+        help="CSV, TXT, Excel, Word veya PDF dosyası yükleyebilirsiniz"
     )
     
     st.markdown("---")
@@ -63,21 +84,31 @@ with st.sidebar:
 # Ana içerik alanı
 if uploaded_file is not None:
     try:
-        # Dosya okuma
-        if uploaded_file.name.endswith('.csv'):
+        text = ""
+        df = None
+        
+        # Dosya tipine göre okuma
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        
+        if file_extension == 'csv':
             df = pd.read_csv(uploaded_file)
-        elif uploaded_file.name.endswith('.txt'):
-            text = uploaded_file.read().decode('utf-8')
-            df = pd.DataFrame({'text': [text]})
-        else:  # Excel
+        elif file_extension in ['xlsx', 'xls']:
             df = pd.read_excel(uploaded_file)
+        elif file_extension == 'txt':
+            text = uploaded_file.read().decode('utf-8')
+        elif file_extension == 'docx':
+            with st.spinner('Word dosyası okunuyor...'):
+                text = extract_text_from_docx(uploaded_file)
+        elif file_extension == 'pdf':
+            with st.spinner('PDF dosyası okunuyor...'):
+                text = extract_text_from_pdf(uploaded_file)
         
-        # Veri önizleme
-        st.subheader("📊 Veri Önizleme")
-        st.dataframe(df.head(), use_container_width=True)
-        
-        # Metin kolonu seçimi (TXT hariç)
-        if not uploaded_file.name.endswith('.txt'):
+        # Veri önizleme (sadece Excel/CSV için)
+        if df is not None:
+            st.subheader("📊 Veri Önizleme")
+            st.dataframe(df.head(), use_container_width=True)
+            
+            # Metin kolonu seçimi
             text_column = st.selectbox(
                 "Metin içeren kolonu seçin:",
                 df.columns.tolist()
@@ -85,8 +116,18 @@ if uploaded_file is not None:
             
             # Tüm metinleri birleştir
             text = ' '.join(df[text_column].dropna().astype(str))
+        
+        # Metin önizleme (Word, PDF, TXT için)
         else:
-            text = df['text'][0]
+            st.subheader("📄 Metin Önizleme")
+            preview_length = min(500, len(text))
+            st.text_area(
+                "İlk 500 karakter:",
+                text[:preview_length] + ("..." if len(text) > 500 else ""),
+                height=150,
+                disabled=True
+            )
+            st.info(f"📝 Toplam karakter sayısı: {len(text):,}")
         
         # Stopwords ayarlama
         stopwords = set(STOPWORDS)
@@ -123,83 +164,86 @@ if uploaded_file is not None:
         
         # Word Cloud oluştur butonu
         if st.button("✨ Word Cloud Oluştur", type="primary", use_container_width=True):
-            with st.spinner("Word cloud oluşturuluyor..."):
-                # Word cloud oluşturma
-                wordcloud = WordCloud(
-                    width=1600,
-                    height=800,
-                    background_color=bg_color,
-                    stopwords=stopwords,
-                    max_words=max_words,
-                    min_font_size=min_font,
-                    max_font_size=max_font,
-                    colormap=color_scheme,
-                    prefer_horizontal=prefer_horizontal,
-                    relative_scaling=0.5,
-                    collocations=False
-                ).generate(text)
-                
-                # Görselleştirme
-                fig, ax = plt.subplots(figsize=(16, 8))
-                ax.imshow(wordcloud, interpolation='bilinear')
-                ax.axis('off')
-                plt.tight_layout(pad=0)
-                
-                st.pyplot(fig)
-                
-                # İndirme butonları
-                st.subheader("💾 İndir")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                # PNG
-                with col1:
-                    buf = io.BytesIO()
-                    wordcloud.to_image().save(buf, format='PNG')
-                    btn = st.download_button(
-                        label="📥 PNG olarak indir",
-                        data=buf.getvalue(),
-                        file_name="wordcloud.png",
-                        mime="image/png"
-                    )
-                
-                # JPG
-                with col2:
-                    buf = io.BytesIO()
-                    wordcloud.to_image().save(buf, format='JPEG')
-                    btn = st.download_button(
-                        label="📥 JPG olarak indir",
-                        data=buf.getvalue(),
-                        file_name="wordcloud.jpg",
-                        mime="image/jpeg"
-                    )
-                
-                # Yüksek çözünürlük PNG
-                with col3:
-                    wordcloud_hd = WordCloud(
-                        width=3200,
-                        height=1600,
+            if not text or len(text.strip()) < 10:
+                st.error("❌ Yeterli metin bulunamadı. Lütfen dosyanızı kontrol edin.")
+            else:
+                with st.spinner("Word cloud oluşturuluyor..."):
+                    # Word cloud oluşturma
+                    wordcloud = WordCloud(
+                        width=1600,
+                        height=800,
                         background_color=bg_color,
                         stopwords=stopwords,
                         max_words=max_words,
-                        min_font_size=min_font*2,
-                        max_font_size=max_font*2,
+                        min_font_size=min_font,
+                        max_font_size=max_font,
                         colormap=color_scheme,
                         prefer_horizontal=prefer_horizontal,
                         relative_scaling=0.5,
                         collocations=False
                     ).generate(text)
                     
-                    buf = io.BytesIO()
-                    wordcloud_hd.to_image().save(buf, format='PNG')
-                    btn = st.download_button(
-                        label="📥 HD PNG indir",
-                        data=buf.getvalue(),
-                        file_name="wordcloud_hd.png",
-                        mime="image/png"
-                    )
-                
-                st.success("✅ Word cloud başarıyla oluşturuldu!")
+                    # Görselleştirme
+                    fig, ax = plt.subplots(figsize=(16, 8))
+                    ax.imshow(wordcloud, interpolation='bilinear')
+                    ax.axis('off')
+                    plt.tight_layout(pad=0)
+                    
+                    st.pyplot(fig)
+                    
+                    # İndirme butonları
+                    st.subheader("💾 İndir")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    # PNG
+                    with col1:
+                        buf = io.BytesIO()
+                        wordcloud.to_image().save(buf, format='PNG')
+                        btn = st.download_button(
+                            label="📥 PNG olarak indir",
+                            data=buf.getvalue(),
+                            file_name="wordcloud.png",
+                            mime="image/png"
+                        )
+                    
+                    # JPG
+                    with col2:
+                        buf = io.BytesIO()
+                        wordcloud.to_image().save(buf, format='JPEG')
+                        btn = st.download_button(
+                            label="📥 JPG olarak indir",
+                            data=buf.getvalue(),
+                            file_name="wordcloud.jpg",
+                            mime="image/jpeg"
+                        )
+                    
+                    # Yüksek çözünürlük PNG
+                    with col3:
+                        wordcloud_hd = WordCloud(
+                            width=3200,
+                            height=1600,
+                            background_color=bg_color,
+                            stopwords=stopwords,
+                            max_words=max_words,
+                            min_font_size=min_font*2,
+                            max_font_size=max_font*2,
+                            colormap=color_scheme,
+                            prefer_horizontal=prefer_horizontal,
+                            relative_scaling=0.5,
+                            collocations=False
+                        ).generate(text)
+                        
+                        buf = io.BytesIO()
+                        wordcloud_hd.to_image().save(buf, format='PNG')
+                        btn = st.download_button(
+                            label="📥 HD PNG indir",
+                            data=buf.getvalue(),
+                            file_name="wordcloud_hd.png",
+                            mime="image/png"
+                        )
+                    
+                    st.success("✅ Word cloud başarıyla oluşturuldu!")
     
     except Exception as e:
         st.error(f"❌ Hata oluştu: {str(e)}")
@@ -212,7 +256,7 @@ else:
     st.markdown("""
     ### 📝 Nasıl Kullanılır?
     
-    1. **Dosya Yükleyin:** CSV, TXT veya Excel dosyanızı yükleyin
+    1. **Dosya Yükleyin:** CSV, TXT, Excel, Word veya PDF dosyanızı yükleyin
     2. **Kolonu Seçin:** (CSV/Excel için) Metin içeren kolonu seçin
     3. **Özelleştirin:** Renk, boyut ve diğer ayarları yapın
     4. **Oluşturun:** "Word Cloud Oluştur" butonuna tıklayın
@@ -220,14 +264,12 @@ else:
     
     ### ✨ Özellikler
     
-    - 📊 Çoklu format desteği (CSV, TXT, Excel)
+    - 📊 Çoklu format desteği (CSV, TXT, Excel, Word, PDF)
     - 🎨 10+ renk şeması
     - 🔤 Türkçe ve İngilizce stopword desteği
-    - ⚙️ Gelişmiş özelleştirme seçenekleri
     - 💾 Çoklu format indirme (PNG, JPG, HD)
-    - 🚀 Hızlı ve kullanımı kolay
     """)
 
 # Footer
 st.markdown("---")
-st.markdown("Kuantum Araştırma ❤️ QmindLab")
+st.markdown("Kuantum Araştırma 🦾 Qmindlab")
